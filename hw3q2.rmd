@@ -1,0 +1,368 @@
+---
+title: "R Notebook"
+output: html_document
+df_print: paged
+---
+```{r}
+#load("/Users/markopeng/Desktop/msong_slhw.rdata")
+load("msong_slhw.rdata")
+logSequence = 10^seq(-2, 9, by=0.01)
+msong_train = msong_train[complete.cases(msong_train),]
+msong_test = msong_test[complete.cases(msong_test),]
+sumds = function(ds) {
+  nvariable = ncol(ds)
+  varnames = colnames(ds)
+  for(i in 1:nvariable) {
+    tmp1 = ds[,i]
+    #remove NA
+    tmp1 = tmp1[!is.na(tmp1)]
+    n = length(tmp1)
+    mean = mean(tmp1)
+    median = median(tmp1)
+    sd = sd(tmp1)
+    q13 = quantile(tmp1, c(0.25, 0.75))
+    min1 = min(tmp1)
+    max1 = max(tmp1)
+    arow = c(n, mean, median, sd, q13, min1, max1)
+    if(i==1) {
+      out1 = arow
+    } else {
+      out1 = rbind(out1, arow)
+    }
+  }
+  rownames(out1) = varnames
+  colnames(out1) = c("n", "mean", "median", "sd", "Q1", "Q3", "Min", "Max")
+  return(out1)
+}
+```
+
+```{r}
+sumds(msong_train)
+```
+
+```{r}
+sumds(msong_test)
+```
+
+```{r}
+ridgeRegression = function(xmat, y, lambda){
+  xmat = as.matrix(xmat)
+  y = as.matrix(y)
+  w = solve((diag(ncol(xmat)) * lambda) + (t(xmat) %*% xmat)) %*% t(xmat) %*% y
+  return(w)
+}
+
+RMSE = function(t, y){
+  return(sqrt( mean( (t - y)^2 , na.rm = TRUE ) ))
+}
+```
+
+```{r}
+# (2)
+msong_train.5000 = msong_train[1:5000,]
+sumds.5000 = sumds(msong_train.5000)
+msong_train.5000.std = msong_train.5000
+# scale training data
+msong_train.5000.std$year = scale(msong_train.5000.std$year, scale=1)
+msong_train.5000.std[,2:ncol(msong_train.5000.std)] = scale(msong_train.5000.std[,2:ncol(msong_train.5000.std)])
+msong_train.5000.std.x = as.matrix(msong_train.5000.std[,2:ncol(msong_train.5000.std)])
+msong_train.5000.std.y = as.matrix(msong_train.5000.std$year)
+msong_train.5000.std.x = cbind(rep(1, nrow(msong_train.5000.std.x)), msong_train.5000.std.x)
+
+# scale testing data
+msong_test.q2.std = msong_test
+msong_test.q2.std$year = scale(msong_test.q2.std$year, center=sumds.5000['year','mean'], scale=1)
+msong_test.q2.std[,2:ncol(msong_test.q2.std)] = scale(msong_test.q2.std[,2:ncol(msong_test.q2.std)], center=sumds.5000[2:nrow(sumds.5000),'mean'], scale=sumds.5000[2:nrow(sumds.5000),'sd'])
+msong_test.q2.std.x = as.matrix(msong_test.q2.std[,2:ncol(msong_test.q2.std)])
+msong_test.q2.std.y = as.matrix(msong_test.q2.std$year)
+msong_test.q2.std.x = cbind(rep(1, nrow(msong_test.q2.std.x)), msong_test.q2.std.x)
+#
+
+```
+```{r}
+# training and testing error
+training.error = NULL
+testing.error = NULL
+x = NULL
+for(i in logSequence){
+  w = ridgeRegression(msong_train.5000.std.x, msong_train.5000.std.y, i)
+  pred = msong_train.5000.std.x %*% w
+  e = RMSE(pred,msong_train.5000.std.y)
+  training.error = cbind(training.error, c((log10(i)), e))
+  
+  pred = msong_test.q2.std.x %*% w
+  x = cbind(x, pred)
+  e = RMSE(pred,msong_test.q2.std.y)
+  testing.error = cbind(testing.error, c(log10(i), e))
+}
+
+```
+```{r}
+top = max(max(training.error[2,]), max(testing.error[2,]))
+bottom = min(min(training.error[2,]), min(testing.error[2,]))
+plot(x=training.error[1,], y=training.error[2,], type='l', col='blue', xlab='log10(lambda)', ylab='RMSE', main='(2) 5000 training data\nfeature standardization, outcome shifting', ylim=c(bottom, top))
+par(new=T)
+plot(x=testing.error[1,], y=testing.error[2,], type='l', col='red', axes=F, xlab='', ylab='', ylim=c(bottom, top))
+
+m = round(min(testing.error[2,]),digits=4)
+abline(a=m,b=0,h = 0, lty = 2)
+legend('topleft', legend=c("Training", "Testing", as.character(m)), col=c("blue", "red", "black"), lty=c("solid", "solid", "dashed"), lwd=2.5)
+
+```
+
+(2).
+在lambda增加時，可以看到對training data的RMSE持續上升，原因是lambda增加時使model在training data上的overfitting情況減少，因為當feature過多時通常會越容易fit training data，regularization讓某些feature的權重降低(會減少模型複雜度)，因此model對training data的fit的程度下降。
+而在Testing data上的表現在一開始會提升(RMSE下降)是因為regularization可以降低一些不重要feature的權重，將原本太多feature而過於複雜的模型簡單化，用真正有用的feature來預測沒看過的資料，後面RMSE會上升則是feature權重降的太低，model underfitting。
+
+```{r}
+# (3) 500
+msong_train.500 = msong_train[1:500,]
+sumds.500 = sumds(msong_train.500)
+msong_train.500.std = msong_train.500
+# scale training data
+msong_train.500.std$year = scale(msong_train.500.std$year, scale=1)
+msong_train.500.std[,2:ncol(msong_train.500.std)] = scale(msong_train.500.std[,2:ncol(msong_train.500.std)])
+msong_train.500.std.x = as.matrix(msong_train.500.std[,2:ncol(msong_train.500.std)])
+msong_train.500.std.y = as.matrix(msong_train.500.std$year)
+msong_train.500.std.x = cbind(rep(1, nrow(msong_train.500.std.x)), msong_train.500.std.x)
+
+# scale testing data
+msong_test.q3.std = msong_test
+msong_test.q3.std$year = scale(msong_test.q3.std$year, center=sumds.500['year','mean'], scale=1)
+msong_test.q3.std[,2:ncol(msong_test.q3.std)] = scale(msong_test.q3.std[,2:ncol(msong_test.q3.std)], center=sumds.500[2:nrow(sumds.500),'mean'], scale=sumds.500[2:nrow(sumds.500),'sd'])
+msong_test.q3.std.x = as.matrix(msong_test.q3.std[,2:ncol(msong_test.q3.std)])
+msong_test.q3.std.y = as.matrix(msong_test.q3.std$year)
+msong_test.q3.std.x = cbind(rep(1, nrow(msong_test.q3.std.x)), msong_test.q3.std.x)
+
+```
+```{r}
+# training and testing error
+training.error = NULL
+testing.error = NULL
+for(i in logSequence){
+  w = ridgeRegression(msong_train.500.std.x, msong_train.500.std.y, i)
+  
+  pred = msong_train.500.std.x %*% w
+  e = RMSE(pred,msong_train.500.std.y)
+  training.error = cbind(training.error, c((log10(i)), e))
+  
+  pred = msong_test.q3.std.x %*% w
+  e = RMSE(pred,msong_test.q3.std.y)
+  testing.error = cbind(testing.error, c(log10(i), e))
+}
+```
+```{r}
+top = max(max(training.error[2,]), max(testing.error[2,]))
+bottom = min(min(training.error[2,]), min(testing.error[2,]))
+plot(x=training.error[1,], y=training.error[2,], type='l', col='blue', xlab='log10(lambda)', ylab='RMSE', main='(3) 500 training data\nfeature standardization, outcome shifting', ylim=c(bottom, top))
+par(new=T)
+plot(x=testing.error[1,], y=testing.error[2,], type='l', col='red', axes=F, xlab='', ylab='', ylim=c(bottom, top))
+m = round(min(testing.error[2,]),digits=4)
+abline(a=m,b=0,h = 0, lty = 2)
+legend('left', legend=c("Training", "Testing", as.character(m)), col=c("blue", "red", "black"), lty=c("solid", "solid", "dashed"), lwd=2.5)
+```
+
+```{r}
+# (3) 1000
+msong_train.1000 = msong_train[1:1000,]
+sumds.1000 = sumds(msong_train.1000)
+msong_train.1000.std = msong_train.1000
+# scale training data
+msong_train.1000.std$year = scale(msong_train.1000.std$year, scale=1)
+msong_train.1000.std[,2:ncol(msong_train.1000.std)] = scale(msong_train.1000.std[,2:ncol(msong_train.1000.std)])
+msong_train.1000.std.x = as.matrix(msong_train.1000.std[,2:ncol(msong_train.1000.std)])
+msong_train.1000.std.y = as.matrix(msong_train.1000.std$year)
+msong_train.1000.std.x = cbind(rep(1, nrow(msong_train.1000.std.x)), msong_train.1000.std.x)
+
+# scale testing data
+msong_test.q3.std = msong_test
+msong_test.q3.std$year = scale(msong_test.q3.std$year, center=sumds.1000['year','mean'], scale=1)
+msong_test.q3.std[,2:ncol(msong_test.q3.std)] = scale(msong_test.q3.std[,2:ncol(msong_test.q3.std)], center=sumds.1000[2:nrow(sumds.1000),'mean'], scale=sumds.1000[2:nrow(sumds.1000),'sd'])
+msong_test.q3.std.x = as.matrix(msong_test.q3.std[,2:ncol(msong_test.q3.std)])
+msong_test.q3.std.y = as.matrix(msong_test.q3.std$year)
+msong_test.q3.std.x = cbind(rep(1, nrow(msong_test.q3.std.x)), msong_test.q3.std.x)
+
+```
+```{r}
+# training and testing error
+training.error = NULL
+testing.error = NULL
+for(i in logSequence){
+  w = ridgeRegression(msong_train.1000.std.x, msong_train.1000.std.y, i)
+  
+  pred = msong_train.1000.std.x %*% w
+  e = RMSE(pred,msong_train.1000.std.y)
+  training.error = cbind(training.error, c((log10(i)), e))
+  
+  pred = msong_test.q3.std.x %*% w
+  e = RMSE(pred,msong_test.q3.std.y)
+  testing.error = cbind(testing.error, c(log10(i), e))
+}
+```
+```{r}
+top = max(max(training.error[2,]), max(testing.error[2,]))
+bottom = min(min(training.error[2,]), min(testing.error[2,]))
+plot(x=training.error[1,], y=training.error[2,], type='l', col='blue', xlab='log10(lambda)', ylab='RMSE', main='(3) 1000 training data\nfeature standardization, outcome shifting', ylim=c(bottom, top))
+par(new=T)
+plot(x=testing.error[1,], y=testing.error[2,], type='l', col='red', axes=F, xlab='', ylab='', ylim=c(bottom, top))
+m = round(min(testing.error[2,]),digits=4)
+abline(a=m,b=0,h = 0, lty = 2)
+legend('topleft', legend=c("Training", "Testing", as.character(m)), col=c("blue", "red", "black"), lty=c("solid", "solid", "dashed"), lwd=2.5)
+```
+
+(3).
+看到training error在500個training data時的起始點比較低(RMSE低)，應該是因為資料少，所以更容易fit全部的點，後面的曲線形狀類似。
+但在testing error就是1000個training data的起始點比較低且最佳的RMSE也較低，符合常理，通常越多training data，在testing上表現也會較好。
+觀察lambda的大小與testing error改善程度，看到在sample數500時在起始testing error與最佳的tseting error中的差距比在sample數1000時大，而在第二小題中的sample數5000時這個差距又更小了，可以推測當sample數量增大時regularization可以改善的testing error程度下降。
+
+```{r}
+# (4)
+msong_train.1000 = msong_train[1:1000,]
+sumds.1000 = sumds(msong_train.1000)
+msong_train.1000.std = msong_train.1000
+# scale training data y
+msong_train.1000.std$year = scale(msong_train.1000.std$year, scale=1)
+msong_train.1000.std.x = as.matrix(msong_train.1000.std[,2:ncol(msong_train.1000.std)])
+msong_train.1000.std.y = as.matrix(msong_train.1000.std$year)
+msong_train.1000.std.x = cbind(rep(1, nrow(msong_train.1000.std.x)), msong_train.1000.std.x)
+
+# scale testing data
+msong_test.q4.std = msong_test
+msong_test.q4.std$year = scale(msong_test.q4.std$year, center=sumds.1000['year','mean'], scale=1)
+msong_test.q4.std.x = as.matrix(msong_test.q4.std[,2:ncol(msong_test.q4.std)])
+msong_test.q4.std.y = as.matrix(msong_test.q4.std$year)
+msong_test.q4.std.x = cbind(rep(1, nrow(msong_test.q4.std.x)), msong_test.q4.std.x)
+```
+```{r}
+# training and testing error
+training.error = NULL
+testing.error = NULL
+for(i in logSequence){
+  w = ridgeRegression(msong_train.1000.std.x, msong_train.1000.std.y, i)
+  
+  pred = msong_train.1000.std.x %*% w
+  e = RMSE(pred,msong_train.1000.std.y)
+  training.error = cbind(training.error, c((log10(i)), e))
+  
+  pred = msong_test.q4.std.x %*% w
+  e = RMSE(pred,msong_test.q4.std.y)
+  testing.error = cbind(testing.error, c(log10(i), e))
+}
+```
+```{r}
+top = max(max(training.error[2,]), max(testing.error[2,]))
+bottom = min(min(training.error[2,]), min(testing.error[2,]))
+plot(x=training.error[1,], y=training.error[2,], type='l', col='blue', xlab='log10(lambda)', ylab='RMSE', main='(4) 1000 training data\n outcome shifting, but no feature standardization', ylim=c(bottom, top))
+par(new=T)
+plot(x=testing.error[1,], y=testing.error[2,], type='l', col='red', axes=F, xlab='', ylab='', ylim=c(bottom, top))
+m = round(min(testing.error[2,]),digits=4)
+abline(a=m,b=0,h = 0, lty = 2)
+legend('bottomright', legend=c("Training", "Testing", as.character(m)), col=c("blue", "red", "black"), lty=c("solid", "solid", "dashed"), lwd=2.5)
+```
+
+(4).
+Training和testing error都上升(最好的表現都在幾乎沒有regularization時)，顯示出regularization沒有用。
+Regularization是要讓權重往0靠近，會給太大的coefficient一些penalty，舉個例子像是長度的單位，若是以公尺為單位時coefficient會比以公分為單位時大上很多(lambda=0時)，此時加入penalty term則不同尺度的feature會影響penalty term的程度會有差異。
+
+為了讓feature對penalty term都有同等的影響力所以需要做feature standardization。
+在這邊不standardize feature的best RMSE是10.308，且出現在lambda接近0的地方(代表不做regularization反而表現較好)，
+前一題(3)有做standardization的最佳RMSE是9.8736，而最佳值出現在log lambda在2與3之間，代表regularization在那邊發揮作用。
+
+```{r}
+# (5)
+msong_train.1000 = msong_train[1:1000,]
+sumds.1000 = sumds(msong_train.1000)
+msong_train.1000.std = msong_train.1000
+# no scale training data y
+msong_train.1000.std.x = as.matrix(msong_train.1000.std[,2:ncol(msong_train.1000.std)])
+msong_train.1000.std.y = as.matrix(msong_train.1000.std$year)
+msong_train.1000.std.x = cbind(rep(1, nrow(msong_train.1000.std.x)), msong_train.1000.std.x)
+
+# no scale testing data
+msong_test.q5.std = msong_test
+msong_test.q5.std.x = as.matrix(msong_test.q5.std[,2:ncol(msong_test.q5.std)])
+msong_test.q5.std.y = as.matrix(msong_test.q5.std$year)
+msong_test.q5.std.x = cbind(rep(1, nrow(msong_test.q5.std.x)), msong_test.q5.std.x)
+```
+```{r}
+# training and testing error
+training.error = NULL
+testing.error = NULL
+for(i in logSequence){
+  w = ridgeRegression(msong_train.1000.std.x, msong_train.1000.std.y, i)
+  
+  pred = msong_train.1000.std.x %*% w
+  e = RMSE(pred,msong_train.1000.std.y)
+  training.error = cbind(training.error, c((log10(i)), e))
+  
+  pred = msong_test.q5.std.x %*% w
+  e = RMSE(pred,msong_test.q5.std.y)
+  testing.error = cbind(testing.error, c(log10(i), e))
+}
+```
+```{r}
+top = max(max(training.error[2,]), max(testing.error[2,]))
+bottom = min(min(training.error[2,]), min(testing.error[2,]))
+plot(x=training.error[1,], y=training.error[2,], type='l', col='blue', xlab='log10(lambda)', ylab='RMSE', main='(5) 1000 training data\nno feature standardization, no outcome shifting' , ylim=c(bottom, top))
+par(new=T)
+plot(x=testing.error[1,], y=testing.error[2,], type='l', col='red', axes=F, xlab='', ylab='', ylim=c(bottom, top))
+m = round(min(testing.error[2,]),digits=4)
+abline(a=m,b=0,h = 0, lty = 2)
+legend('left', legend=c("Training", "Testing", as.character(m)), col=c("blue", "red", "black"), lty=c("solid", "solid", "dashed"), lwd=2.5)
+```
+
+(5).
+不做feature standardization和outcome shifting，Best RMSE與只做outcome shifting沒有差很多，皆比兩個都做得第三題結果差。
+在lambda很小時三個結果差距都不大，但(3)有做feature standardization，所以regularization發揮效果可以找到一個比不做regularization更低的RMSE。(4)沒有做feature standardization則regularization沒有效果。
+(5)的結果看到lambda增加時RMSE的上升比(4)的還快，應該是因為沒有做outcome shifting，原本outcome的數值都在2000左右，使得估計出來的weight都較大，penalty term的影響太大，讓model一下子就underfit。
+結論就是為了使regularization發揮效果，讓每個feature對penalty term有相同影響力，必須standerdize feature。
+這次作業我有加入常數項去train，但train出來常數項的weight都接近0(-1.134318e-13)。而將outcome shift到平均為0我認為可以將weight的截距項去除，如果在預測時不在feature內加入常數項1，那將outcome shift到平均為0就是必要的，
+
+```{r}
+# (5)-2
+msong_train.1000 = msong_train[1:1000,]
+sumds.1000 = sumds(msong_train.1000)
+msong_train.1000.std = msong_train.1000
+# scale training data
+#msong_train.1000.std$year = scale(msong_train.1000.std$year, scale=1)
+msong_train.1000.std[,2:ncol(msong_train.1000.std)] = scale(msong_train.1000.std[,2:ncol(msong_train.1000.std)])
+msong_train.1000.std.x = as.matrix(msong_train.1000.std[,2:ncol(msong_train.1000.std)])
+msong_train.1000.std.y = as.matrix(msong_train.1000.std$year)
+msong_train.1000.std.x = cbind(rep(1, nrow(msong_train.1000.std.x)), msong_train.1000.std.x)
+
+# scale testing data
+msong_test.q3.std = msong_test
+#msong_test.q3.std$year = scale(msong_test.q3.std$year, center=sumds.1000['year','mean'], scale=1)
+msong_test.q3.std[,2:ncol(msong_test.q3.std)] = scale(msong_test.q3.std[,2:ncol(msong_test.q3.std)], center=sumds.1000[2:nrow(sumds.1000),'mean'], scale=sumds.1000[2:nrow(sumds.1000),'sd'])
+msong_test.q3.std.x = as.matrix(msong_test.q3.std[,2:ncol(msong_test.q3.std)])
+msong_test.q3.std.y = as.matrix(msong_test.q3.std$year)
+msong_test.q3.std.x = cbind(rep(1, nrow(msong_test.q3.std.x)), msong_test.q3.std.x)
+
+```
+```{r}
+# training and testing error
+training.error = NULL
+testing.error = NULL
+ww=NULL
+for(i in logSequence){
+  w = ridgeRegression(msong_train.1000.std.x, msong_train.1000.std.y, i)
+  ww = cbind(ww,w)
+  pred = msong_train.1000.std.x %*% w
+  e = RMSE(pred,msong_train.1000.std.y)
+  training.error = cbind(training.error, c((log10(i)), e))
+  
+  pred = msong_test.q3.std.x %*% w
+  e = RMSE(pred,msong_test.q3.std.y)
+  testing.error = cbind(testing.error, c(log10(i), e))
+}
+```
+```{r}
+top = max(max(training.error[2,]), max(testing.error[2,]))
+bottom = min(min(training.error[2,]), min(testing.error[2,]))
+plot(x=training.error[1,], y=training.error[2,], type='l', col='blue', xlab='log10(lambda)', ylab='RMSE', main='(3) 1000 training data\nfeature standardization, outcome shifting', ylim=c(5, 20))
+par(new=T)
+plot(x=testing.error[1,], y=testing.error[2,], type='l', col='red', axes=F, xlab='', ylab='', ylim=c(bottom, top))
+m = round(min(testing.error[2,]),digits=4)
+abline(a=m,b=0,h = 0, lty = 2)
+legend('topleft', legend=c("Training", "Testing", as.character(m)), col=c("blue", "red", "black"), lty=c("solid", "solid", "dashed"), lwd=2.5)
+```
